@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>2分間押下タイマー（QR付き）</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs2@0.0.2/qrcode.min.js"></script>
+<style>
+body{font-family:system-ui,-apple-system,Meiryo,Helvetica,Arial;background:#fff;padding:16px;color:#111;}
+button{padding:12px 18px;margin:4px;border-radius:8px;border:none;background:#0b67d0;color:#fff;font-size:1rem;}
+#pressButton{width:100%;padding:28px;font-size:1.4rem;border-radius:12px;touch-action:none;margin-top:16px;}
+.stats{display:flex;gap:12px;margin-top:12px;}
+.card{background:#f7f9fc;padding:10px;border-radius:8px;flex:1;}
+canvas{max-width:100%;height:260px;}
+#qrcode{margin-top:12px;}
+</style>
+</head>
+<body>
+<h2>2分間押下タイマー（QR付き）</h2>
+
+<div>
+  <button id="startBtn">Start (2:00)</button>
+  <button id="stopBtn" disabled>Stop</button>
+  <button id="resetBtn">Reset</button>
+  <button id="downloadCsvBtn" disabled>Download CSV</button>
+</div>
+
+<div class="stats">
+  <div class="card">Timer: <div id="timerDisplay">02:00.000</div></div>
+  <div class="card">Press Count: <div id="countDisplay">0</div></div>
+  <div class="card">Avg Duration (s): <div id="avgDuration">0.000</div></div>
+</div>
+
+<button id="pressButton">押す / Press</button>
+
+<canvas id="barChart"></canvas>
+
+<div>
+  <h4>QRコード（自動生成）</h4>
+  <div id="qrcode"></div>
+</div>
+
+<script>
+/* ===== 設定 ===== */
+const TOTAL_MS = 120000; // 2分
+let running=false, startTime=null, remainingMs=TOTAL_MS, timerInterval=null;
+let pressCount=0, pressRecords=[], currentPress=null;
+
+/* ===== UI ===== */
+const startBtn=document.getElementById('startBtn');
+const stopBtn=document.getElementById('stopBtn');
+const resetBtn=document.getElementById('resetBtn');
+const pressButton=document.getElementById('pressButton');
+const countDisplay=document.getElementById('countDisplay');
+const avgDuration=document.getElementById('avgDuration');
+const timerDisplay=document.getElementById('timerDisplay');
+const downloadCsvBtn=document.getElementById('downloadCsvBtn');
+const ctx=document.getElementById('barChart').getContext('2d');
+
+/* ===== Chart ===== */
+let chart=new Chart(ctx,{type:'bar',data:{labels:[],datasets:[{label:'Press duration (s)',data:[],backgroundColor:'rgba(11,103,208,0.8)',borderRadius:4}]},options:{responsive:true,scales:{y:{beginAtZero:true,title:{display:true,text:'seconds'}},x:{title:{display:true,text:'press index'}}},plugins:{legend:{display:false}}}});
+
+/* ===== タイマー ===== */
+function formatTimeMs(ms){if(ms<0)ms=0;const s=Math.floor(ms/1000);const mm=Math.floor(s/60).toString().padStart(2,'0');const ss=(s%60).toString().padStart(2,'0');const msPart=(ms%1000).toString().padStart(3,'0');return`${mm}:${ss}.${msPart}`;}
+function updateTimerDisplay(){timerDisplay.textContent=formatTimeMs(remainingMs);}
+function tick(){const now=Date.now();const elapsed=now-startTime;remainingMs=Math.max(TOTAL_MS-elapsed,0);updateTimerDisplay();if(remainingMs<=0)stopMeasurement();}
+
+/* ===== 記録 ===== */
+function recordPressStart(){if(!running||currentPress)return;currentPress={t_start_ms:Date.now()-startTime};}
+function recordRelease(){if(!running||!currentPress)return;const duration_ms=Math.max(Date.now()-startTime-currentPress.t_start_ms,0);pressCount+=1;const rec={index:pressCount,t_start_s:(currentPress.t_start_ms/1000),duration_s:(duration_ms/1000)};pressRecords.push(rec);currentPress=null;countDisplay.textContent=pressCount;const avg=pressRecords.reduce((a,b)=>a+b.duration_s,0)/pressRecords.length;avgDuration.textContent=avg.toFixed(3);chart.data.labels.push(String(rec.index));chart.data.datasets[0].data.push(Number(rec.duration_s.toFixed(3)));chart.update();}
+
+/* ===== CSV ===== */
+function buildCsv(){const lines=[];lines.push(['index','t_start_s','duration_s'].join(','));for(const r of pressRecords){lines.push([r.index,r.t_start_s.toFixed(3),r.duration_s.toFixed(3)].join(','));}return lines.join('\n');}
+function downloadCsv(){const blob=new Blob([buildCsv()],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`press_records_${Date.now()}.csv`;document.body.appendChild(a);a.click();a.remove();}
+
+/* ===== 操作 ===== */
+function startMeasurement(){if(running)return;running=true;startTime=Date.now();remainingMs=TOTAL_MS;pressCount=0;pressRecords=[];currentPress=null;chart.data.labels=[];chart.data.datasets[0].data=[];chart.update();countDisplay.textContent='0';avgDuration.textContent='0.000';downloadCsvBtn.disabled=true;stopBtn.disabled=false;startBtn.disabled=true;timerInterval=setInterval(tick,25);updateTimerDisplay();}
+function stopMeasurement(){if(!running)return;running=false;clearInterval(timerInterval);startBtn.disabled=false;stopBtn.disabled=true;if(currentPress)recordRelease();downloadCsvBtn.disabled=false;}
+function resetMeasurement(){running=false;clearInterval(timerInterval);remainingMs=TOTAL_MS;updateTimerDisplay();startTime=null;pressCount=0;pressRecords=[];currentPress=null;chart.data.labels=[];chart.data.datasets[0].data=[];chart.update();countDisplay.textContent='0';avgDuration.textContent='0.000';downloadCsvBtn.disabled=true;stopBtn.disabled=true;startBtn.disabled=false;}
+
+/* ===== イベント ===== */
+startBtn.addEventListener('click',startMeasurement);
+stopBtn.addEventListener('click',stopMeasurement);
+resetBtn.addEventListener('click',resetMeasurement);
+downloadCsvBtn.addEventListener('click',downloadCsv);
+pressButton.addEventListener('mousedown',recordPressStart);
+pressButton.addEventListener('mouseup',recordRelease);
+pressButton.addEventListener('mouseleave',recordRelease);
+pressButton.addEventListener('touchstart',recordPressStart,{passive:false});
+pressButton.addEventListener('touchend',recordRelease,{passive:false});
+pressButton.addEventListener('touchcancel',recordRelease,{passive:false});
+
+/* ===== QRコード自動生成 ===== */
+new QRCode(document.getElementById("qrcode"),{
+  text: window.location.href,
+  width:160,
+  height:160
+});
+</script>
+</body>
+</html>
